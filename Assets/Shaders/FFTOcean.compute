@@ -1,0 +1,303 @@
+﻿#pragma kernel Height0 
+#pragma kernel Height
+#pragma kernel Butterfly
+#pragma kernel HorizontalButterfly
+#pragma kernel VerticalButterfly
+#pragma kernel FinalPass
+#pragma kernel NormalMap
+
+#define PI 3.1415926535897932384626433832795
+
+uniform float unit;
+uniform float t;
+uniform int N;
+uniform float A;
+uniform float2 windDirection;
+uniform float windSpeed;//风速
+uniform float gravity;//重力 Earth=>9.81
+
+
+StructuredBuffer<float4> uniform01Data;
+StructuredBuffer<float4> uniform01Data2;
+
+StructuredBuffer<int> reserveBit;
+
+RWTexture2D<float4> Height0Tex;
+RWTexture2D<float4> HeightTex;
+RWTexture2D<float4> ChoppyTex;
+
+RWTexture2D<float4> ButterflyTex;
+RWTexture2D<float4> ButterflyInput;
+RWTexture2D<float4> ButterflyOutput;
+RWTexture2D<float4> ButterflyInputCP;
+RWTexture2D<float4> ButterflyOutputCP;
+RWTexture2D<float4> FinalPassInput;
+RWTexture2D<float4> FinalPassChoppyInput;
+RWTexture2D<float4> FinalPassOutput;
+
+RWTexture2D<float4> DisplacementMap;
+RWTexture2D<float4> NormalMapTex;
+
+uniform int stage;//当前butterfly阶段
+
+//根据两个均匀分布的样本，生成标准正态分布样本
+//float BoxMullerTransform(float sample1, float sample2) {
+//	return sqrt(log(sample1)*(-2.0))*cos(2.0*PI*sample2);
+//}
+
+
+float4  BoxMullerTransform(float4 sample1, float4 sample2) {
+	
+	float4 a = sqrt(-2.0*log(clamp(sample1,0.001,1.0)));
+	float4 b = 2.0*PI*clamp(sample2, 0.001, 1.0);
+	return float4(a.x*cos(b.x), a.x*sin(b.x), a.z*cos(b.z), a.z*sin(b.z));
+}
+
+float Height0(float2 KK, float2 windDirection, float windSpeed, float gravity, float A) {
+	float k = length(KK);//防止除0 NaN
+	if (k == 0) {
+		return 0;
+	}
+	float L = windSpeed*windSpeed / gravity;
+	float kdotw = dot(normalize(KK),normalize(windDirection));
+	float Phi = A*exp(-1.0 / (k*k*L*L)) / (k*k*k*k)*pow(kdotw,2) ;// *exp(-k*k*pow(L / 2000.0, 2.0));
+	float H0 = 1.0/sqrt(2.0)*sqrt(Phi);
+	
+	return H0;
+}
+
+[numthreads(8, 8, 1)]
+void Height0(uint3 id : SV_DispatchThreadID) {
+	int2 X = id.xy-int2(N*0.5, N*0.5);
+	float2 K = float2(2.0 * PI*X.x/ unit, 2.0 * PI*X.y/ unit);
+
+
+	float H0 = Height0(K, windDirection, windSpeed, gravity, A);
+	float H0_minus = Height0(-K, windDirection, windSpeed, gravity, A);
+
+	uint index = id.x + id.y * 512;
+	float4 sample4 = BoxMullerTransform(uniform01Data[index], uniform01Data2[index]);
+
+	Height0Tex[id.xy] = float4(sample4.xy*H0,  sample4.zw*H0_minus);
+
+	//Result2[id.xy] = float4(sample4.zw*H0_minus, 0, 0);
+	//Height0Tex[id.xy] = sample4.x;
+}
+
+//代表一个复数的结构
+struct complex {
+	float real;
+	float img;
+};
+
+complex Complex(float r, float i) {
+	complex a;
+	a.real = r;
+	a.img = i;
+	return a;
+}
+
+
+complex Complex(float2 d) {
+	complex a;
+	a.real = d.x;
+	a.img = d.y;
+	return a;
+}
+
+
+complex Add(complex a, complex b) {
+	complex c;
+	c.real = a.real + b.real;
+	c.img = a.img + b.img;
+	return c;
+}
+
+complex Mul(complex a, complex b) {
+	float real = a.real*b.real - a.img*b.img;
+	float img =  a.real*b.img + a.img*b.real;
+	return Complex(real, img);
+}
+
+
+complex Conj(complex a) {
+	complex a_conj;
+	a_conj.real = a.real;
+	a_conj.img =  -a.img;
+	return a_conj;
+}
+
+[numthreads(8, 8, 1)]
+void Height(uint3 id : SV_DispatchThreadID){
+	int2 X = id.xy - int2(N*0.5,N*0.5);
+	float unitRev = 1.0 / unit;
+	float2 K = float2(2.0 * PI*X.x*unitRev, 2.0 * PI*X.y*unitRev);
+	float k = max(0.00001, length(K));//防止除0 NaN
+	float w = sqrt(gravity*k);
+
+	float4 H0_Data=Height0Tex[id.xy];
+	complex H0 = Complex(H0_Data.x, H0_Data.y);
+	complex H0_minus = Conj(Complex(H0_Data.z, H0_Data.w));
+
+	//欧拉公式
+	float cos_wt = cos(w*t);
+	float sin_wt = sin(w*t);
+
+	complex exp_wt  = Complex(cos_wt, sin_wt);
+	complex exp_m_wt = Complex(cos_wt, -sin_wt);
+
+	complex H=Add(Mul(H0, exp_wt), Mul(H0_minus, exp_m_wt));
+	complex dx = Complex(0.0, -K.x / k);
+	complex dz = Complex(0.0, -K.y / k);
+
+	complex CX = Mul(dx, H);
+	complex CZ = Mul(dz, H);
+
+	HeightTex[id.xy] = float4(H.real,H.img,0,0);
+	ChoppyTex[id.xy] = float4(CX.real, CX.img, CZ.real, CZ.img);
+}
+
+
+[numthreads(1, 8, 1)]
+void Butterfly(uint3 id : SV_DispatchThreadID) {
+
+	float k = id.y* (float(N)/pow(2.0, id.x + 1))%float(N);
+	//欧拉公式
+	float cos_wt = cos(2.0*PI *k/ float(N));
+	float sin_wt = sin(2.0*PI *k/ float(N));
+	complex twiddle = Complex(cos_wt, sin_wt);
+
+	bool isTop;
+	if((id.y%pow(2.0, id.x + 1)) < pow(2.0, id.x)) {
+		isTop = true;
+	}
+	else {
+		isTop = false;
+	}
+
+	uint span = uint(pow(2, id.x));
+
+	uint2 topAndBottomIndex=uint2(0,0);
+	//第一阶段
+	if (id.x == 0) {
+		if (isTop==true) {
+			topAndBottomIndex = uint2(reserveBit[id.y], reserveBit[id.y + 1]);
+		}
+		else {
+			topAndBottomIndex = uint2(reserveBit[id.y-1], reserveBit[id.y]);
+		}
+	}
+	else {
+		if (isTop==true) {
+			topAndBottomIndex = uint2(id.y, id.y + span);
+		}
+		else {
+			topAndBottomIndex = uint2(id.y - span,id.y);
+		}
+	}
+
+	//reserveBit[id.y];
+
+	ButterflyTex[id.xy] = float4(twiddle.real, twiddle.img,float2(topAndBottomIndex));
+}
+
+
+[numthreads(8, 8, 1)]
+void HorizontalButterfly(uint3 coord : SV_DispatchThreadID) {
+	float4 data = ButterflyTex[uint2(stage, coord.x)];
+	uint2 sampleIndex = uint2(data.zw);//top 和 bottom的索引
+	complex wn = Complex(data.xy);
+	//Height
+	complex top = Complex(ButterflyInput[uint2(sampleIndex.x, coord.y)].xy);
+	complex bottom = Complex(ButterflyInput[uint2(sampleIndex.y, coord.y)].xy);
+	complex H = Add(top, Mul(wn, bottom));//蝴蝶操作
+	ButterflyOutput[coord.xy] = float4(H.real, H.img, 0, 0);
+	//Choppy
+	float4 choppyData = ButterflyInputCP[uint2(sampleIndex.x, coord.y)];
+	complex topX = Complex(choppyData.xy);
+	complex topZ = Complex(choppyData.zw);
+	float4 choppyData2 = ButterflyInputCP[uint2(sampleIndex.y, coord.y)];
+	complex bottomX = Complex(choppyData2.xy);
+	complex bottomZ = Complex(choppyData2.zw);
+
+	complex ChoppyX = Add(topX, Mul(wn, bottomX));//蝴蝶操作
+	complex ChoppyZ = Add(topZ, Mul(wn, bottomZ));
+	
+	ButterflyOutputCP[coord.xy] = float4(ChoppyX.real, ChoppyX.img, ChoppyZ.real, ChoppyZ.img);
+}
+
+
+[numthreads(8, 8, 1)]
+void VerticalButterfly(uint3 coord : SV_DispatchThreadID) {
+	float4 data = ButterflyTex[uint2(stage, coord.y)];
+	uint2 sampleIndex = uint2(data.zw);//top 和 bottom的索引
+	complex wn = Complex(data.xy);
+	//height
+	complex top = Complex(ButterflyInput[uint2(coord.x, sampleIndex.x)].xy);
+	complex bottom = Complex(ButterflyInput[uint2(coord.x, sampleIndex.y)].xy);
+	complex H = Add(top, Mul(wn, bottom));//蝴蝶操作
+    ButterflyOutput[coord.xy] = float4(H.real, H.img, 0, 0);
+
+	//choppy
+	float4 choppyData = ButterflyInputCP[uint2(coord.x, sampleIndex.x)];
+	complex topX = Complex(choppyData.xy);
+	complex topZ = Complex(choppyData.zw);
+	float4 choppyData2 = ButterflyInputCP[uint2(coord.x, sampleIndex.y)];
+	complex bottomX = Complex(choppyData2.xy);
+	complex bottomZ = Complex(choppyData2.zw);
+
+	complex ChoppyX = Add(topX, Mul(wn, bottomX));//蝴蝶操作
+	complex ChoppyZ = Add(topZ, Mul(wn, bottomZ));
+
+	ButterflyOutputCP[coord.xy] = float4(ChoppyX.real, ChoppyX.img, ChoppyZ.real, ChoppyZ.img);
+}
+
+[numthreads(8, 8, 1)]
+void FinalPass(uint3 coord : SV_DispatchThreadID) {
+	float params[] = { 1.0,-1.0};
+	uint index = uint(coord.x + coord.y) % 2;
+	float f = params[index];
+
+	
+
+	float h=FinalPassInput[coord.xy].x;
+	float2 choppy = FinalPassChoppyInput[coord.xy].xz;
+	float3 data = float3(choppy.x, h, choppy.y);
+	//FinalPassOutput[coord.xy] = FinalPassInput[coord.xy];
+	
+	float3 r = float3(data*f / float(N*N));
+	FinalPassOutput[coord.xy] = float4(r.x,r.y,r.z,1);
+}
+
+
+
+
+[numthreads(8, 8, 1)]
+void NormalMap(uint3 coord : SV_DispatchThreadID) {
+	//使用有限差分来计算导数
+
+	/*float scale = float(N) / unit;
+	float2 d_offset= - DisplacementMap[coord.xy].xz*scale;
+	*/
+
+	float3 offset = float3(-1, 0, 1);
+	
+	float4 x1 = DisplacementMap[coord.xy + offset.xy];
+	float4 x2 = DisplacementMap[coord.xy + offset.zy];
+	float4 y1 = DisplacementMap[coord.xy + offset.yx];
+	float4 y2 = DisplacementMap[coord.xy + offset.yz];
+
+	float3 tangent = float3(2.0/ N, x2.y - x1.y, 0);
+	float3 binormal = float3(0, y2.y - y1.y, 2.0/ N);
+	float3 normal = cross(binormal, tangent);
+	//float3 normal = float3(x2.y - x1.y, y2.y - y1.y, 0);
+	normal = normalize(normal);
+
+	float dxx = 1 + (x2.x - x1.x)*N*0.5;
+	float dyy = 1 + (y2.z - y1.z)*N*0.5;
+	float dxy=  1 + (x2.z - x1.z)*N*0.5;
+	float Jacobian = dxx*dyy - dxy*dxy;
+
+	//normal = float3(0, 1, 0);
+	NormalMapTex[coord.xy] = float4(normal, Jacobian);
+}

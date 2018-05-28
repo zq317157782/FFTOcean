@@ -1,0 +1,107 @@
+Base path: C:/Program Files/Unity/Hub/Editor/2018.1.0f2/Editor/Data
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  error: 2 plat 4 at Ocean.compute(295): undeclared identifier 'N'
+  api=4 insize=8881 outsize=0 ok=0
+Cmd: compileComputeKernel
+  api=4 insize=8890 outsize=985 ok=1
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8887 outsize=2189 ok=1
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8911 outsize=1129 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8919 outsize=1133 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8897 outsize=1129 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8885 outsize=1261 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8923 outsize=1553 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8936 outsize=1261 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8922 outsize=1261 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8998 outsize=1613 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8998 outsize=1129 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8951 outsize=1613 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8959 outsize=1261 ok=1
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8995 outsize=1129 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8989 outsize=1129 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8990 outsize=1613 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8996 outsize=1205 ok=1
+Cmd: compileComputeKernel
+  api=4 insize=8997 outsize=1553 ok=1
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=9012 outsize=1097 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8974 outsize=1553 ok=1
+Cmd: compileComputeKernel
+  api=4 insize=8964 outsize=1261 ok=1
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8983 outsize=1261 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8974 outsize=1021 ok=1
+Cmd: initializeCompiler
+Cmd: compileComputeKernel
+  api=4 insize=8974 outsize=1261 ok=1
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler
+Cmd: initializeCompiler

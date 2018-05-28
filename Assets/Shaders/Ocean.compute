@@ -1,0 +1,304 @@
+﻿
+#pragma kernel GenerateHeight0SpectrumTexture
+#pragma kernel GenerateHeightSpectrumTexture
+#pragma kernel GenerateButterfly
+#pragma kernel HorizontalButterfly
+#pragma kernel VerticalButterfly
+#pragma kernel GenerateDisplacement
+#pragma kernel GenerateNormalMap
+#pragma kernel GenerateFoldMap
+
+#define PI 3.1415926535897932384626433832795
+#define TWO_PI 2.0*PI
+
+RWTexture2D<float4> Height0SpectrumTexture;
+RWTexture2D<float4> HeightSpectrumTexture;
+RWTexture2D<float4> ChoppySpectrumTexture;
+RWTexture2D<float4> ButterflyTex;
+
+RWTexture2D<float4> FFTInput;
+RWTexture2D<float4> FFTOutput;
+//choppy 
+RWTexture2D<float4> FFTInput2;
+RWTexture2D<float4> FFTOutput2;
+
+RWTexture2D<float4> DisplacementInput;
+RWTexture2D<float4> DisplacementInput2;
+RWTexture2D<float4> DisplacementOutput;
+
+RWTexture2D<float4> NormalMap;
+RWTexture2D<float4> FoldMap;
+
+uniform float A;
+uniform float wd;
+uniform float wSpeed;
+uniform int patch;
+uniform int size;
+uniform float gravity;
+uniform float t;
+uniform int stage;
+uniform float heightScale;
+uniform float choppinessScale;
+
+StructuredBuffer<float4> UniformSamples;
+StructuredBuffer<int> ReserveBit;
+
+//代表一个复数的结构
+struct complex {
+	float real;
+	float img;
+};
+
+complex Complex(float r, float i) {
+	complex a;
+	a.real = r;
+	a.img = i;
+	return a;
+}
+
+
+complex Complex(float2 d) {
+	complex a;
+	a.real = d.x;
+	a.img = d.y;
+	return a;
+}
+
+
+complex Add(complex a, complex b) {
+	complex c;
+	c.real = a.real + b.real;
+	c.img = a.img + b.img;
+	return c;
+}
+
+complex Mul(complex a, complex b) {
+	float real = a.real*b.real - a.img*b.img;
+	float img = a.real*b.img + a.img*b.real;
+	return Complex(real, img);
+}
+
+int Index(uint2 id) {
+	return id.y*size + id.x;
+}
+int Index(uint3 id) {
+	return id.y*size + id.x;
+}
+
+
+float4  BoxMullerTransform(float4 _sample) {
+	float2 a = sqrt(-2.0*log(_sample.xy));
+	float2 b = 2.0*PI*_sample.zw;
+	return float4(a.x*cos(b.x), a.x*sin(b.x), a.y*cos(b.y), a.y*sin(b.y));
+}
+
+
+float Phillips(float2 K, float2 W, float ws, float g, float A) {
+	float sqr_K = K.x*K.x + K.y*K.y;
+	if (sqr_K == 0) {
+		return 0;
+	}
+	float2 Kn = float2(K.x / sqr_K, K.y / sqr_K);
+	float kDotW = dot(Kn, W);
+	float L = ws*ws / g;
+	float phi = A*exp(-1.0 / (sqr_K*L*L))/(sqr_K*sqr_K)*pow(kDotW,2)*exp(-sqr_K*pow(L/2000.0, 2.0));
+	return phi;
+}
+
+[numthreads(8,8,1)]
+void GenerateHeight0SpectrumTexture(uint3 id : SV_DispatchThreadID)
+{
+	int2 X = id.xy - size*0.5;
+	float invPatch=1.0/ patch;
+	float2 K = float2(TWO_PI*X.x*invPatch,TWO_PI*X.y*invPatch);
+	float2 W = float2(cos(wd), sin(wd));
+	float phi=Phillips(K, W, wSpeed, gravity, A);
+	float phi_minus= Phillips(-K, W, wSpeed, gravity, A);
+	float4 gs= BoxMullerTransform(UniformSamples[Index(id)]);
+	float sqrt_2 = sqrt(2.0);
+	
+	float2 H0 = 1.0 / sqrt_2*sqrt(phi)*gs.xy;
+	float2 H0_minus= 1.0 / sqrt_2*sqrt(phi_minus)*gs.zw;
+
+
+	Height0SpectrumTexture[id.xy] = float4(H0, H0_minus);
+}
+
+[numthreads(8, 8, 1)]
+void GenerateHeightSpectrumTexture(uint3 id : SV_DispatchThreadID)
+{
+	int2 X = id.xy - size*0.5;
+	float invPatch = 1.0 / patch;
+	float2 K = float2(TWO_PI*X.x*invPatch, TWO_PI*X.y*invPatch);
+
+	float sqr_K = K.x*K.x + K.y*K.y;
+	float mag = max(0.000001,sqrt(sqr_K));
+	float w = sqrt(gravity*mag);
+	float cos_wt = cos(w*t);
+	float sin_wt = sin(w*t);
+	//欧拉
+	complex exp_wt = Complex(cos_wt, sin_wt);
+	complex exp_wt_m = Complex(cos_wt, -sin_wt);
+
+	float4 height0Spectrum = Height0SpectrumTexture[id.xy];
+	complex H0 = Complex(height0Spectrum.xy);
+	complex H0_m = Complex(height0Spectrum.zw);
+	complex H = Add(Mul(H0, exp_wt), Mul(H0_m,  exp_wt_m));
+	HeightSpectrumTexture[id.xy] = float4(H.real, H.img, 0, 0);
+
+	//计算choppy
+	complex dx = Complex(0.0, -K.x / mag);
+	complex dz = Complex(0.0, -K.y / mag);
+
+	complex CX = Mul(dx, H);
+	complex CZ = Mul(dz, H);
+
+
+
+	ChoppySpectrumTexture[id.xy] = float4(CX.real, CX.img, CZ.real, CZ.img);
+}
+
+[numthreads(1, 8, 1)]
+void GenerateButterfly(uint3 id : SV_DispatchThreadID) {
+
+	float k = id.y* (float(size) / pow(2.0,id.x+1)) % float(size);
+	//欧拉公式
+	float cos_wt = cos(TWO_PI*k / float(size));
+	float sin_wt = sin(TWO_PI*k / float(size));
+	complex twiddle = Complex(cos_wt, sin_wt);
+
+	int span = int(pow(2, id.x));
+
+	bool isTop;
+	if ((id.y%pow(2.0, id.x + 1)) < span) {
+		isTop = true;
+	}
+	else {
+		isTop = false;
+	}
+
+	int2 topAndBottomIndex = int2(0, 0);
+	//第一阶段
+	if (id.x == 0) {
+		if (isTop == true) {
+			topAndBottomIndex = int2(ReserveBit[id.y], ReserveBit[id.y + 1]);
+		}
+		else {
+			topAndBottomIndex = int2(ReserveBit[id.y - 1], ReserveBit[id.y]);
+		}
+	}
+	else {
+		if (isTop == true) {
+			topAndBottomIndex = int2(id.y, id.y + span);
+		}
+		else {
+			topAndBottomIndex = int2(id.y - span, id.y);
+		}
+	}
+	ButterflyTex[id.xy] = float4(twiddle.real, twiddle.img, float2(topAndBottomIndex));
+}
+
+
+[numthreads(8, 8, 1)]
+void HorizontalButterfly(uint3 coord : SV_DispatchThreadID) {
+	float4 data = ButterflyTex[int2(stage, coord.x)];
+	int2 sampleIndex = int2(data.zw);//top 和 bottom的索引
+	complex wn = Complex(data.xy);
+	//Height
+	complex top = Complex(FFTInput[int2(sampleIndex.x, coord.y)].xy);
+	complex bottom = Complex(FFTInput[int2(sampleIndex.y, coord.y)].xy);
+	complex H = Add(top, Mul(wn, bottom));//蝴蝶操作
+	FFTOutput[coord.xy] = float4(H.real, H.img, 0, 0);
+	
+	//Choppy
+	float4 choppyData = FFTInput2[uint2(sampleIndex.x, coord.y)];
+	complex topX = Complex(choppyData.xy);
+	complex topZ = Complex(choppyData.zw);
+	float4 choppyData2 = FFTInput2[uint2(sampleIndex.y, coord.y)];
+	complex bottomX = Complex(choppyData2.xy);
+	complex bottomZ = Complex(choppyData2.zw);
+
+	complex ChoppyX = Add(topX, Mul(wn, bottomX));//蝴蝶操作
+	complex ChoppyZ = Add(topZ, Mul(wn, bottomZ));
+
+	FFTOutput2[coord.xy] = float4(ChoppyX.real, ChoppyX.img, ChoppyZ.real, ChoppyZ.img);
+}
+
+[numthreads(8, 8, 1)]
+void VerticalButterfly(uint3 coord : SV_DispatchThreadID) {
+	float4 data = ButterflyTex[int2(stage, coord.y)];
+	int2 sampleIndex = int2(data.zw);//top 和 bottom的索引
+	complex wn = Complex(data.xy);
+	//Height
+	complex top = Complex(FFTInput[int2(coord.x, sampleIndex.x)].xy);
+	complex bottom = Complex(FFTInput[int2(coord.x, sampleIndex.y)].xy);
+	complex H = Add(top, Mul(wn, bottom));//蝴蝶操作
+	FFTOutput[coord.xy] = float4(H.real, H.img, 0, 0);
+
+	//choppy
+	float4 choppyData = FFTInput2[uint2(coord.x, sampleIndex.x)];
+	complex topX = Complex(choppyData.xy);
+	complex topZ = Complex(choppyData.zw);
+	float4 choppyData2 = FFTInput2[uint2(coord.x, sampleIndex.y)];
+	complex bottomX = Complex(choppyData2.xy);
+	complex bottomZ = Complex(choppyData2.zw);
+
+	complex ChoppyX = Add(topX, Mul(wn, bottomX));//蝴蝶操作
+	complex ChoppyZ = Add(topZ, Mul(wn, bottomZ));
+
+	FFTOutput2[coord.xy] = float4(ChoppyX.real, ChoppyX.img, ChoppyZ.real, ChoppyZ.img);
+}
+
+
+
+[numthreads(8, 8, 1)]
+void GenerateDisplacement(uint3 coord : SV_DispatchThreadID) {
+	float params[] = { 1.0,-1.0 };
+	int index = uint(coord.x + coord.y) % 2;
+	float f = params[index];
+	float h = DisplacementInput[coord.xy].x;
+	float2 xz = DisplacementInput2[coord.xy].xz;
+	float3 d= float3(xz.x,h,xz.y)*f / float(size*size);
+	DisplacementOutput[coord.xy] = float4(d.x*choppinessScale, -d.y*heightScale, d.z*choppinessScale, 1);
+}
+
+
+
+[numthreads(8, 8, 1)]
+void GenerateNormalMap(uint3 coord : SV_DispatchThreadID) {
+	//使用有限差分来计算导数
+	float3 offset = float3(-1, 0, 1);
+	float4 x1 = DisplacementOutput[coord.xy + offset.xy];
+	float4 x2 = DisplacementOutput[coord.xy + offset.zy];
+	float4 y1 = DisplacementOutput[coord.xy + offset.yx];
+	float4 y2 = DisplacementOutput[coord.xy + offset.yz];
+
+	float3 tangent = float3(2.0/size, x2.y - x1.y, 0);
+	float3 binormal = float3(0,y2.y - y1.y,2.0/size);
+	float3 normal = cross(binormal,tangent);
+	//float3 normal = float3(x2.y - x1.y, y2.y - y1.y, 0);
+	normal = normalize(normal);
+	/*float dxx = 1 + (x2.x - x1.x)*N*0.5;
+	float dyy = 1 + (y2.z - y1.z)*N*0.5;
+	float dxy = 1 + (x2.z - x1.z)*N*0.5;
+	float Jacobian = dxx*dyy - dxy*dxy;
+*/
+	NormalMap[coord.xy] = float4(normal.xzy*0.5+0.5,0);
+}
+
+[numthreads(8, 8, 1)]
+void GenerateFoldMap(uint3 coord : SV_DispatchThreadID) {
+	//使用有限差分来计算导数
+	float3 offset = float3(-1, 0, 1);
+	float4 x1 = DisplacementOutput[coord.xy + offset.xy];
+	float4 x2 = DisplacementOutput[coord.xy + offset.zy];
+	float4 y1 = DisplacementOutput[coord.xy + offset.yx];
+	float4 y2 = DisplacementOutput[coord.xy + offset.yz];
+	float dxx = 1 + (x2.x - x1.x)*0.5*choppinessScale;
+	float dyy = 1 + (y2.z - y1.z)*0.5*choppinessScale;
+	float dxy = (y2.x - y1.x)*0.5*choppinessScale;
+	float dyx = (x2.z - x1.z)*0.5*choppinessScale;
+	float Jacobian =(dxx*dyy - dxy*dyx);
+
+	FoldMap[coord.xy] = float4(Jacobian, Jacobian, Jacobian, 0);
+}
